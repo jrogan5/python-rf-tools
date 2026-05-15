@@ -1,0 +1,11 @@
+The end goal of this tool is to allow the user to interact with data for a measurement, and generate, in a clean manner, an MDIF file that combines many measurement files that have different values for a couple variables which are specified in a header. Eventually this tool will be packaged into an executable that the user can just run and totally interact through the CLI. 
+
+The user should be able to interact with this tool over one main CLI, where he interacts with it in the following manner:
+
+When the user hits run, he should see a summary of what the tool is, what version the tool is, etc. 
+
+It should ask the user next what is the directory of the measurement data he is working with.
+
+It should then present the user with a list of options for the type of data he wants to process (gain compression, imd sweep, S parameters, noise figure)
+
+It should then ask for a list of (case-insensitive) keywords to search for in data files. eg. for ind sweep, the user may want to enter the keywords swp-IMD, IMD-Swp)
