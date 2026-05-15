@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "rf-mdif-tools"
+version = "1.0.0"  # keep in sync with _version.py
+description = "Convert RF measurement data (gain, IMD, NF, S‑params) to MDIF format"
+requires-python = ">=3.10"
+dependencies = ["numpy"]
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6"]
+
+[project.scripts]
+rf-mdif       = "data_to_mdif.cli:main"
+rf-mdif-gain  = "data_to_mdif.gain.cli:main"
+rf-mdif-imd   = "data_to_mdif.imd.cli:main"
+rf-mdif-nf    = "data_to_mdif.nf.cli:main"
+rf-mdif-s2p   = "data_to_mdif.s2p.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["utils*", "data_to_mdif*"]

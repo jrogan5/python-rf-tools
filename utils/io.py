@@ -2,7 +2,7 @@
 
 from pathlib import Path
 import logging
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional
 
 def ensure_plots_dir(root: Path) -> Path:
     """Create (if needed) a plots sub‑folder under root and return its Path."""
@@ -19,17 +19,16 @@ def setup_logging(verbose: bool) -> None:
 def write_bad_report(
     base_path: Path,
     *,
-    problems: List[str] = None,
-    bad_files: List[str] = None,
-    bad_files_by_net: Dict[str, List[Tuple[str, str]]] = None,
+    nets_without_csv: Optional[List[str]] = None,
+    bad_files: Optional[List[str]] = None,
+    bad_files_by_net: Optional[Dict[str, List[Tuple[str, str]]]] = None,
     kind: str = "",
 ) -> None:
     """
-    Write a human‑readable “bad‑measurement” report.
+    Write a human‑readable bad‑measurement report to ``<base_path>/plots/``.
 
-    The file is placed in ``<base_path>/plots`` and is named
-    ``<kind>_bad_measurements.txt`` (or simply ``bad_measurements.txt`` when
-    *kind* is empty).
+    The file is named ``<kind>_bad_measurements.txt`` (or ``bad_measurements.txt``
+    when *kind* is empty).  Nothing is written if all inputs are empty.
     """
     plots = base_path / "plots"
     plots.mkdir(parents=True, exist_ok=True)
@@ -39,9 +38,9 @@ def write_bad_report(
 
     lines: List[str] = []
 
-    if problems:
-        lines.append("! Measurements with problems:\n")
-        for n in sorted(problems):
+    if nets_without_csv:
+        lines.append(f"! Nets with no {kind} files (omitted from MDIF):\n")
+        for n in sorted(nets_without_csv):
             lines.append(f"!   {n}\n")
         lines.append("\n")
 
@@ -65,7 +64,5 @@ def write_bad_report(
 
     report_path.write_text("".join(lines))
     logging.getLogger(__name__).info(
-        f"A detailed malformed measurement report has been written to: {report_path}"
+        f"Bad‑measurement report written to: {report_path}"
     )
-
-    

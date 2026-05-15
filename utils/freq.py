@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 
-def extract_single_frequency_csv(csv_path: Path, regex: str) -> int:
+def extract_frequency(csv_path: Path, regex: str) -> int:
     """Read *csv_path* line‑by‑line and return the first integer matched by *regex*."""
     pattern = re.compile(regex, re.IGNORECASE)
     with csv_path.open("r", newline="") as f:
