@@ -1,0 +1,89 @@
+# Python compiled files
+__pycache__/
+*.py[cod]          # .pyc, .pyo, .pyd
+
+# C / C++ / Fortran / other compiled objects
+*.o
+*.obj
+*.so
+*.dll
+*.out
+*.class
+*.jar
+
+# Python zipapp / stand‑alone bundle
+*.pyz              
+
+
+*.aux
+*.log
+*.out
+*.toc               # Table‑of‑contents files (you asked for this)
+*.bbl
+*.blg
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.ilg
+*.ind
+*.idx
+*.lof
+*.lot
+*.nav
+*.snm
+*.vrb
+*.bcf
+*.run.xml
+
+# Plain‑text / spreadsheet / binary data
+*.csv
+*.tsv
+*.xls
+*.xlsx
+*.xlsm
+*.ods
+
+# PDF reports, scanned docs, etc.
+*.pdf
+
+# Custom / obscure data extensions
+*.mdif              # (you mentioned this)
+*.dat
+*.db
+*.sqlite
+*.sqlite3
+*.h5
+*.hdf5
+
+# Large binary blobs (feel free to add more)
+*.zip
+*.tar
+*.gz
+*.bz2
+*.7z
+*.rar
+*.iso
+*.dmg
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# JetBrains (PyCharm, IntelliJ, etc.)
+.idea/
+*.iml
+
+# Eclipse / PyDev
+.project
+.pydevproject
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Misc OS files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*.lnk
