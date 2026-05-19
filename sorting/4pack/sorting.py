@@ -78,9 +78,10 @@ def _safe_out_dir(p: str) -> Tuple[bool, Any]:
 # Maps (SN, Temperature) → list of (path_number, s21_db_array)
 _GroupKey = Tuple[int, float]
 _Groups = Dict[_GroupKey, List[Tuple[int, np.ndarray]]]
+_FullMap = Dict[Tuple[int, float, int], Dict[str, np.ndarray]]
 
 
-def _load(mdif_path: Path) -> Tuple[np.ndarray, _Groups]:
+def _load(mdif_path: Path) -> Tuple[np.ndarray, _Groups, _FullMap]:
     """
     Return the shared frequency vector and a dict mapping (SN, Temperature) →
     list of (path_number, s21_db_array) pairs.
@@ -88,10 +89,13 @@ def _load(mdif_path: Path) -> Tuple[np.ndarray, _Groups]:
     meta, blocks = read_mdif(mdif_path)
     freq = blocks[0]["freq"]
     groups: _Groups = {}
+    full:   _FullMap = {}
+
     for m, b in zip(meta, blocks):
         key: _GroupKey = (int(m["SN"]), float(m["Temperature"]))
         groups.setdefault(key, []).append((int(m["Path"]), b["s21_db"]))
-    return freq, groups
+        full[(int(m["SN"]), float(m["Temperature"]), int(m["Path"]))] = b
+    return freq, groups, full
 
 
 def _avg_paths(path_blocks: List[Tuple[int, np.ndarray]]) -> np.ndarray:
@@ -118,6 +122,7 @@ def _sort_index(groups: _Groups) -> Dict[int, int]:
 def _build_blocks(
     freq: np.ndarray,
     groups: _Groups,
+    full: _FullMap,
     idx: Dict[int, int],
 ) -> List[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
     """
@@ -129,23 +134,46 @@ def _build_blocks(
 
     blocks = []
     for sn, temp in ordered:
-        avg_gain = _avg_paths(groups[(sn, temp)])
-        blocks.append((
-            {
-                "SortIndex": idx.get(sn, beyond),
-                "!SN": sn,
+        path_list = groups[(sn, temp)]
+        path_list.sort(key=lambda p: p[0])
+        for path, _ in path_list:
+            meta = {
+                "!SortIndex": idx.get(sn, beyond),
+                "SN": sn,
                 "Temperature": temp,
-            },
-            [{"freq": float(f), "s21_avg_db": float(g)} for f, g in zip(freq, avg_gain)],
-        ))
+                "Path": path,
+            }
+
+            blk = full[(sn, temp, path)]
+            rows: List[Dict[str, Any]] = []
+            for i, f in enumerate(freq):
+                row = {"freq": float(f)}
+                for col, arr in blk.items():
+                    if col == "freq":
+                        continue
+                    row[col] = float(arr[i])
+                rows.append(row)
+
+            blocks.append((meta, rows))
     return blocks
 
+MDIF_HEADER_TOKENS = [
+    "%freq(real)",
+    "s11_db(real)",
+    "s11_deg(real)",
+    "s21_db(real)",
+    "s21_deg(real)",
+    "s12_db(real)",
+    "s12_deg(real)",
+    "s22_db(real)",
+    "s22_deg(real)",
+]
 
 def main(in_mdif: Path, out_mdif: Path) -> None:
-    freq, groups = _load(in_mdif)
+    freq, groups, sparameters = _load(in_mdif)
     idx = _sort_index(groups)
-    blocks = _build_blocks(freq, groups, idx)
-    write_mdif(out_mdif, blocks=blocks, header_tokens=["%freq(real)", "s21_avg_db(real)"])
+    blocks = _build_blocks(freq, groups, sparameters, idx)
+    write_mdif(out_mdif, blocks=blocks, header_tokens=MDIF_HEADER_TOKENS)
     print(f"Written sorted/averaged data to {out_mdif}")
 
 

@@ -1,6 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 # Spec for the RDI net sorter (rf-sort-rdi.exe).
 
+
 a = Analysis(
     ["sorting/rdi/sorting.py"],
     pathex=["."],

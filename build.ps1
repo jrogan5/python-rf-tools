@@ -145,5 +145,4 @@ Write-Host " Build complete.  Current executables in dist\:"
 Write-Host ""
 Get-ChildItem "dist\*.exe" | ForEach-Object { Write-Host "   $($_.Name)" }
 Write-Host ""
-Write-Host " Send the v$version files to your recipient."
 Write-Host " ============================================================"

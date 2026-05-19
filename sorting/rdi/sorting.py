@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+NUM_NETS = 508 # the number of nets in the RDI. Some nets may be mising measurement entries. 
+
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
@@ -76,7 +78,14 @@ def _safe_out_dir(p: str) -> Tuple[bool, Any]:
 # Core logic
 # -------------------------------------------------------------------------
 
-def _load(mdif_path: Path) -> Tuple[np.ndarray, Dict[float, List[Tuple[int, np.ndarray]]]]:
+# define the groupings as if all rdi measurements were present
+def _canonical_groups() -> List[List[int]]:
+    """Return [[1,2,3,4], [5,6,7,8], …, [505,506,507,508]]"""
+    return [list(range(start, start + 4))
+            for start in range(1, NUM_NETS + 1, 4)]
+
+# loading the mewasurement data from an mdif file. 
+def _load(mdif_path: Path) -> Tuple[np.ndarray, Dict[float, List[Tuple[int, np.ndarray]]], Dict[float, List[Tuple[int, np.ndarray]]]]:
     """
     Return the shared frequency vector and a dict mapping temperature →
     sorted list of (net_number, s21_db_array) pairs.
@@ -84,15 +93,25 @@ def _load(mdif_path: Path) -> Tuple[np.ndarray, Dict[float, List[Tuple[int, np.n
     meta, blocks = read_mdif(mdif_path)
     freq = blocks[0]["freq"]
     data: Dict[float, List[Tuple[int, np.ndarray]]] = {}
+    full_map: Dict[float, List[Tuple[int, np.ndarray]]] = {}
     for m, b in zip(meta, blocks):
         data.setdefault(float(m["Temperature"]), []).append((int(m["Net"]), b["s21_db"]))
-    return freq, data
+        full_map[(float(m["Temperature"]), int(m["Net"]))] = b
+    return freq, data, full_map
 
 
 def _group_by_4(nets: List[Tuple[int, np.ndarray]]) -> List[List[Tuple[int, np.ndarray]]]:
-    """Split a list of (net, array) into sorted groups of four."""
-    nets.sort(key=lambda x: x[0])
-    return [nets[i:i + 4] for i in range(0, len(nets), 4)]
+    """Split a list of (net, array) into sorted groups of four. Don't skip any net index in 1, 2, 3, ..., 508. """
+    net_lookup: Dict[int, np.ndarray] = {net: arr for net, arr in nets}
+
+    groups: List[List[Tuple[int, np.ndarray]]] = []
+    for template in _canonical_groups():               # e.g. [1, 2, 3, 4]
+        present = [
+            (n, net_lookup[n]) for n in template if n in net_lookup
+        ]                                               # 0‑4 items
+        groups.append(present)
+
+    return groups
 
 
 def _avg_group(group: List[Tuple[int, np.ndarray]]) -> np.ndarray:
@@ -109,11 +128,13 @@ def _make_sort_index(
     ambient = {23.0, 25.0}
     ambient_means = {
         (temp, gid): np.mean(_avg_group(group))
-        for temp, groups in temp_groups.items()
-        if temp in ambient
-        for gid, group in enumerate(groups)
+            for temp, groups in temp_groups.items()
+                if temp in ambient
+                    for gid, group in enumerate(groups)
+                        if group 
     }
     ordered = sorted(ambient_means.items(), key=lambda kv: kv[1])
+    print(ordered)
     return {key: rank + 1 for rank, (key, _) in enumerate(ordered)}
 
 
@@ -134,26 +155,47 @@ def _flatten_and_sort(
     flat.sort(key=lambda x: (x[0], x[1], x[2]))
     return [(temp, gid, group) for _, temp, gid, group in flat]
 
+MDIF_HEADER_TOKENS = [
+    "%freq(real)",
+    "s11_db(real)",
+    "s11_deg(real)",
+    "s21_db(real)",
+    "s21_deg(real)",
+    "s12_db(real)",
+    "s12_deg(real)",
+    "s22_db(real)",
+    "s22_deg(real)",
+]
 
 def main(in_mdif: Path, out_mdif: Path) -> None:
-    freq, temp_data = _load(in_mdif)
+    freq, temp_data, sparameters = _load(in_mdif)
     temp_groups = {t: _group_by_4(lst) for t, lst in temp_data.items()}
     idx_map = _make_sort_index(temp_groups)
     ordered = _flatten_and_sort(temp_groups, idx_map)
 
     blocks: List[Tuple[Dict[str, Any], List[Dict[str, Any]]]] = []
     for temp, gid, group in ordered:
-        avg_gain = _avg_group(group)
-        blocks.append((
-            {
-                "SortIndex": idx_map.get((temp, gid), 0),
-                "!Net": group[0][0],
+        for net in _canonical_groups()[gid]:
+            blk = sparameters.get((temp, net))
+            if blk is None : # no data
+                continue
+            meta = {
+                "!SortIndex": idx_map.get((temp, gid), 0),
+                "Net": net,
                 "Temperature": temp,
-            },
-            [{"freq": float(f), "s21_avg_db": float(g)} for f, g in zip(freq, avg_gain)],
-        ))
+            }
+            rows = []
+            for i, f in enumerate(freq):
+                row = {"freq": float(f)}
+                for col, arr in blk.items():
+                    if col == "freq":
+                        continue
+                    row[col] = float(arr[i])
+                rows.append(row)
 
-    write_mdif(out_mdif, blocks=blocks, header_tokens=["%freq(real)", "s21_avg_db(real)"])
+            blocks.append((meta, rows))
+
+    write_mdif(out_mdif, blocks=blocks, header_tokens=MDIF_HEADER_TOKENS)
     print(f"Written sorted/averaged data to {out_mdif}")
 
 
