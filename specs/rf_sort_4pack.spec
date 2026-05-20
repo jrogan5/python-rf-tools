@@ -1,10 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
 # Spec for the 4-pack path sorter (rf-sort-4pack.exe).
 
-
 a = Analysis(
-    ["sorting/4pack/sorting.py"],
-    pathex=["."],
+    ["../sorting/4pack/sorting.py"],
+    pathex=[".."],
     hiddenimports=["_version", "utils.mdif", "utils.cli"],
     datas=[],
     binaries=[],

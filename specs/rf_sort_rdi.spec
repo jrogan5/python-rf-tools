@@ -3,8 +3,8 @@
 
 
 a = Analysis(
-    ["sorting/rdi/sorting.py"],
-    pathex=["."],
+    ["../sorting/rdi/sorting.py"],
+    pathex=[".."],
     hiddenimports=["_version", "utils.mdif", "utils.cli"],
     datas=[],
     binaries=[],

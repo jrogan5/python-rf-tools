@@ -22,8 +22,8 @@ _hidden = [
 ]
 
 a = Analysis(
-    ["data_to_mdif/cli.py"],
-    pathex=["."],
+    ["../data_to_mdif/cli.py"],
+    pathex=[".."],
     hiddenimports=_hidden,
     datas=[],
     binaries=[],
