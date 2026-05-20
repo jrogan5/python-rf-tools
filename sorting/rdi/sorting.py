@@ -180,8 +180,8 @@ def main(in_mdif: Path, out_mdif: Path) -> None:
             if blk is None : # no data
                 continue
             meta = {
-                "!SortIndex": idx_map.get((temp, gid), 0),
-                "Net": net,
+                "SortIndex": idx_map.get((temp, gid), 0),
+                "!Net": net,
                 "Temperature": temp,
             }
             rows = []

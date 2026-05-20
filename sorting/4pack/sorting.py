@@ -138,8 +138,8 @@ def _build_blocks(
         path_list.sort(key=lambda p: p[0])
         for path, _ in path_list:
             meta = {
-                "!SortIndex": idx.get(sn, beyond),
-                "SN": sn,
+                "SortIndex": idx.get(sn, beyond),
+                "!SN": sn,
                 "Temperature": temp,
                 "Path": path,
             }
