@@ -10,8 +10,10 @@ and write the blocks in SortIndex order.
 Optionally accepts a second NF MDIF file (same net/temperature structure, from
 the nf converter) and writes a sorted NF MDIF using the same SortIndex.
 
-SortIndex is computed from the mean ambient-temperature (23 degC or 25 degC)
-s21_db across each group. Lowest gain group = index 1.
+SortNet is assigned per net: within each ambient-ranked group (ranked by mean
+s21_db at 23 °C or 25 °C, lowest gain = rank 1), the four nets receive
+SortNet values 4*(rank-1)+1 … 4*(rank-1)+4, giving a unique 1..508 index.
+Non-ambient-temperature blocks receive SortNet=0.
 
 Usage (interactive):  python sorting.py
 Usage (scripted):     python sorting.py --input p/in.mdif --output p/out.mdif
@@ -212,6 +214,15 @@ SPARAM_HEADER = [
 NF_HEADER = ["%freq(real)", "nf_db(real)"]
 
 
+def _sort_net(sort_index: int, pos_in_group: int) -> int:
+    """Convert a 1-based group sort_index and 0-based intra-group position to a
+    globally unique SortNet value in 1..NUM_NETS.  Returns 0 for unsorted blocks
+    (sort_index == 0, i.e. non-ambient temperature groups)."""
+    if sort_index == 0:
+        return 0
+    return 4 * (sort_index - 1) + pos_in_group + 1
+
+
 def _build_sparam_blocks(
     freq: np.ndarray,
     temp_groups: Dict[float, List[List[Tuple[int, np.ndarray]]]],
@@ -220,12 +231,13 @@ def _build_sparam_blocks(
 ) -> List[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
     blocks = []
     for temp, gid, _ in _ordered_groups(temp_groups, idx_map):
-        for net in _canonical_groups()[gid]:
+        group_sort_index = idx_map.get((temp, gid), 0)
+        for pos, net in enumerate(_canonical_groups()[gid]):
             blk = full_map.get((temp, net))
             if blk is None:
                 continue
             meta = {
-                "SortIndex": idx_map.get((temp, gid), 0),
+                "SortNet": _sort_net(group_sort_index, pos),
                 "!Net": net,
                 "Temperature": temp,
             }
@@ -243,17 +255,16 @@ def _build_nf_blocks(
     temp_groups: Dict[float, List[List[Tuple[int, np.ndarray]]]],
     idx_map: Dict[Tuple[float, int], int],
 ) -> List[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
-    """
-    Write one NF block per net, in the same group order as the S-param output.
-    """
+    """Write one NF block per net, in the same group order as the S-param output."""
     blocks = []
     for temp, gid, _ in _ordered_groups(temp_groups, idx_map):
-        for net in _canonical_groups()[gid]:
+        group_sort_index = idx_map.get((temp, gid), 0)
+        for pos, net in enumerate(_canonical_groups()[gid]):
             blk = nf_map.get((temp, net))
             if blk is None:
                 continue
             meta = {
-                "SortIndex": idx_map.get((temp, gid), 0),
+                "SortNet": _sort_net(group_sort_index, pos),
                 "!Net": net,
                 "Temperature": temp,
             }
