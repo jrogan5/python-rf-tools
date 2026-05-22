@@ -22,10 +22,18 @@ _BANNER = f"""
 ╔══════════════════════════════════════════════════════╗
 ║       RF Measurements MDIF Generator  v{VERSION}         ║
 ║                                                      ║
-║  Combines per‑net measurement files into MDIF        ║
-║  format for use with ADS and similar EDA tools.      ║
+║  Combines measurement files into MDIF format for     ║
+║  use with ADS and similar EDA tools.                 ║
 ╚══════════════════════════════════════════════════════╝
 """
+
+_DUT_MENU = """
+Select device under test:
+
+  1  RDI
+  2  4‑pack
+
+Enter one number: """
 
 _MENU = """
 Select measurement type(s) to process:
@@ -41,9 +49,9 @@ Select measurement type(s) to process:
 Enter one number: """
 
 
-def _prompt_base_path() -> Path:
+def _prompt_base_path(hint: str) -> Path:
     while True:
-        raw = prompt_missing("Data directory (containing E1, E2, … sub‑folders)", Path)
+        raw = prompt_missing(f"Data directory ({hint})", Path)
         if raw.is_dir():
             return raw
         print(f"  Directory not found: {raw}")
@@ -86,10 +94,16 @@ def _run_nf(base_path: Path, temperature: float, key: str) -> None:
     print("    Done.")
 
 
-def main() -> None:
-    print(_BANNER)
+def _run_4pack(base_path: Path) -> None:
+    from data_to_mdif.s2p.sparam_nf_to_mdif import convert
+    output_path = base_path / "plots"
+    print("\n  → Running 4‑pack S‑parameter + NF converter …")
+    convert(base_path, output_path)
+    print("    Done.")
 
-    base_path = _prompt_base_path()
+
+def _main_rdi() -> None:
+    base_path = _prompt_base_path("containing E1, E2, … sub‑folders")
     temperature = _prompt_temperature()
 
     try:
@@ -155,6 +169,39 @@ def main() -> None:
         print("All conversions completed successfully.")
     print(f"Output files written to: {plots_dir}")
     print('='*54)
+
+
+def _main_4pack() -> None:
+    base_path = _prompt_base_path("containing RXEM sub‑folders")
+
+    errors = []
+    try:
+        _run_4pack(base_path)
+    except Exception as exc:
+        errors.append(str(exc))
+        print(f"    [WARN] {exc}")
+
+    plots_dir = base_path / "plots"
+    print(f"\n{'='*54}")
+    if errors:
+        print(f"Finished with {len(errors)} error(s) — check the output above.")
+    else:
+        print("All conversions completed successfully.")
+    print(f"Output files written to: {plots_dir}")
+    print('='*54)
+
+
+def main() -> None:
+    print(_BANNER)
+
+    dut = input(_DUT_MENU).strip()
+
+    if dut == "1":
+        _main_rdi()
+    elif dut == "2":
+        _main_4pack()
+    else:
+        sys.exit(f"[ERROR] Unknown option: '{dut}'")
 
 
 if __name__ == "__main__":

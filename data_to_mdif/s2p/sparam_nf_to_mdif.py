@@ -180,30 +180,12 @@ def _nf_to_mdif_blocks(
 
 
 # -------------------------------------------------------------------------
-# CLI
+# Core conversion function (callable by other modules)
 # -------------------------------------------------------------------------
-def _parse_cli() -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="Convert S‑parameter + NF CSVs into MDIF files (RAW and PROCESSED)."
-    )
-    p.add_argument("--base-path", type=Path,
-                   help="Root directory containing the RXEM folders.")
-    p.add_argument("--output-path", type=Path,
-                   help="Directory where the MDIF files will be written.")
-    return p.parse_args()
-
-
-def main() -> None:
-    args = _parse_cli()
-
-    base_path: Path = args.base_path or prompt_missing(
-        "Base directory containing RXEM folders", Path
-    )
-    output_path: Path = args.output_path or prompt_missing(
-        "Directory where MDIF files should be written", Path
-    )
+def convert(base_path: Path, output_path: Path) -> None:
+    """Convert all 4-pack CSVs under *base_path* and write MDIF files to *output_path*."""
     if not base_path.is_dir():
-        sys.exit(f"[ERROR] Directory not found: {base_path}")
+        raise FileNotFoundError(f"Directory not found: {base_path}")
     output_path.mkdir(parents=True, exist_ok=True)
 
     rxem_dirs = [
@@ -211,7 +193,7 @@ def main() -> None:
         if p.is_dir() and re.match(r"RXEM\d+-\d+$", p.name, re.IGNORECASE)
     ]
     if not rxem_dirs:
-        sys.exit("[ERROR] No RXEM folders found under the base path.")
+        raise RuntimeError("No RXEM folders found under the base path.")
     logger.info(f"Found {len(rxem_dirs)} RXEM folders.")
 
     sparam_raw:  Dict[Key, List[SParamRow]] = {}
@@ -256,11 +238,40 @@ def main() -> None:
             logger.info(f"No {label} data found – skipping.")
             continue
         out_path = output_path / fname
-        convert = _sparam_to_mdif_blocks if "sparam" in fname.lower() else _nf_to_mdif_blocks
-        write_mdif(out_path, convert(groups), header_tokens=header)
+        block_fn = _sparam_to_mdif_blocks if "sparam" in fname.lower() else _nf_to_mdif_blocks
+        write_mdif(out_path, block_fn(groups), header_tokens=header)
         logger.info(f"Wrote {label} MDIF → {out_path}")
 
     logger.info("Done.")
+
+
+# -------------------------------------------------------------------------
+# CLI
+# -------------------------------------------------------------------------
+def _parse_cli() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="Convert S‑parameter + NF CSVs into MDIF files (RAW and PROCESSED)."
+    )
+    p.add_argument("--base-path", type=Path,
+                   help="Root directory containing the RXEM folders.")
+    p.add_argument("--output-path", type=Path,
+                   help="Directory where the MDIF files will be written.")
+    return p.parse_args()
+
+
+def main() -> None:
+    args = _parse_cli()
+
+    base_path: Path = args.base_path or prompt_missing(
+        "Base directory containing RXEM folders", Path
+    )
+    output_path: Path = args.output_path or prompt_missing(
+        "Directory where MDIF files should be written", Path
+    )
+    try:
+        convert(base_path, output_path)
+    except (FileNotFoundError, RuntimeError) as exc:
+        sys.exit(f"[ERROR] {exc}")
 
 
 if __name__ == "__main__":
