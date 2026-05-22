@@ -37,7 +37,6 @@ def run(
         if not csv_paths:
             nets_without_csv.append(net.name)
             continue
-
         net_number = int(net.name.lstrip("Ee"))
         csv_path = csv_paths[0]
         try:
@@ -50,7 +49,6 @@ def run(
         except Exception as exc:
             bad_files.append(str(csv_path))
             bad_files_by_net.setdefault(net.name, []).append((str(csv_path), str(exc)))
-
     mdif_blocks = [
         (
             {"Net": net_number, "Temperature": temperature},

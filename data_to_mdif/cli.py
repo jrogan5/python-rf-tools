@@ -20,7 +20,7 @@ from _version import __version__ as VERSION
 
 _BANNER = f"""
 ╔══════════════════════════════════════════════════════╗
-║       RF Measurements MDIF Generator  v{VERSION}        ║
+║       RF Measurements MDIF Generator  v{VERSION}         ║
 ║                                                      ║
 ║  Combines per‑net measurement files into MDIF        ║
 ║  format for use with ADS and similar EDA tools.      ║

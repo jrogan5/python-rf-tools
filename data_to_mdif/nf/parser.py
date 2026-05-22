@@ -35,6 +35,7 @@ def parse_nf_csv(csv_path: Path, *, freq_col: str, nf_candidates: Tuple[str, ...
         except KeyError as e:
             raise KeyError(f"Missing column {e} in {csv_path.name}") from e
         except ValueError as e:
+            if row[freq_col] == "END": continue
             raise ValueError(f"Non‑numeric value at row {i} in {csv_path.name}: {e}") from e
         rows.append({"frequency_hz": freq_hz, "nf_db": nf_db})
     if not rows:
