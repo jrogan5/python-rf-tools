@@ -1,0 +1,27 @@
+Task to do for DBF plotting based on 64 folders here (184 now incomings): 
+
+Perform a drop down menu in Python in order to plot the S11 (Mag or Phase) (Command line interface ok ) 
+1.	Operator shall be able to select the Freq bandwidth, ,Powered /unpowerered and the path to display 
+2.	Curves shall be able to superimpose on the same graph on top of each other with legend
+3.	Use the read me file title to identify each path in each folder 
+
+Directory structure: shown in C:\Users\ja099685\Desktop\python-rf-tools\templates\measurement_data\test_260504_113540
+
+test_260504_113540/
+|
+|-- ADC*-P*-J*.txt           # shows the path for the particular measdurement data
+|
+|-- test_rx_digirf_frequency_sweep[ADCDigiRFAmpPhase]/  # ignore for now
+|
+|-- test_rx_rf_isol_ret_loss_powered[ADCMultiport_S_Parameters_RL]/acq_260504_114624/  # where all the ret loss data are for powered
+|   |-- [MULTIPORT_Sp][P*][DBF_EM_SPOUT*].mat # file containing data from measurements in structs. These files will be refered to as "the data"
+
+|
+|-- test_rx_rf_isol_ret_loss_powered[ADCMultiport_S_Parameters_RL]/acq_260504_114643/  # where all the ret loss data are for unpowered
+
+
+S11 measurement data found in Matlab measurement file should be exported automatically. The script can (but does not have to) use a CSV fomrat as a n intermediary to the MDIF format if it makes the worekflowe simpler. 
+
+
+To be Confirmed: Final task is to add a quick layout view pointing the path RL displayed in order to establish some trend on good and bad RL path. 
+Just return Loss s11 is plotted so far but we could reuse the script to plot other dataset in same kind of format. 
