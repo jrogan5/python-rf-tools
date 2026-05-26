@@ -4,8 +4,8 @@
 from PyInstaller.building.build_main import Analysis, PYZ, EXE
 
 a = Analysis(
-    ["dbf_to_mdif/cli.py"],
-    pathex=["."],
+    ["../dbf_to_mdif/cli.py"],
+    pathex=[".."],
     binaries=[],
     datas=[],
     hiddenimports=[

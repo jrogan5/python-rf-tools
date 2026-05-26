@@ -33,10 +33,10 @@ if ($verFile -notmatch '__version__\s*=\s*[''"]([^''"]+)[''"]') {
     Write-Error "Could not read __version__ from _version.py"
     exit 1
 }
-$version = $Matches[1]
+$defaultVersion = $Matches[1]
 
 Write-Host ""
-Write-Host " RF MDIF Tools  v$version"
+Write-Host " RF MDIF Tools  v$defaultVersion"
 Write-Host " ============================================================"
 
 # -- Ensure PyInstaller is installed ------------------------------------------
@@ -69,7 +69,7 @@ function Get-NewestSourceTime {
 function Test-NeedsRebuild {
     param([string]$ExeName, [string[]]$SourcePaths)
     if ($Force) { return $true }
-    $existing = Get-Item "dist\$ExeName-v$version.exe" -ErrorAction SilentlyContinue
+    $existing = Get-Item "dist\$ExeName-v$defaultVersion.exe" -ErrorAction SilentlyContinue
     if (-not $existing) { return $true }
     $newestSource = Get-NewestSourceTime $SourcePaths
     return $newestSource -gt $existing.LastWriteTime
@@ -93,18 +93,37 @@ $tools = @(
         Spec    = "specs\rf_sort_4pack.spec"
         Sources = @("sorting\4pack", "utils", "_version.py")
     }
-)
+    @{
+    Name    = "rf-plot"
+    Spec    = "specs\rf-plot.spec"
+    Sources = @("plot", "utils", "_version.py")
+}
+    @{
+    Name    = "rf-dbf-to-mdif"
+    Spec    = "specs\rf-dbf-to-mdif.spec"
+    Sources = @("dbf_to_mdif", "utils", "_version.py")
+}
 
-# -- Determine what actually needs building -----------------------------------
-$toBuild = $tools | Where-Object { Test-NeedsRebuild $_.Name $_.Sources }
+)
+$toBuild = @()
+foreach ($t in $tools) {
+    $ans = Read-Host "Build $($t.Name)? [Y/n]"
+    if ($ans -match '^[Nn]') { continue }
+
+    $verPrompt = Read-Host "Version to use for $($t.Name) (blank = $defaultVersion)"
+    $buildVer = if ($verPrompt) { $verPrompt } else { $defaultVersion }
+    $t | Add-Member -NotePropertyName BuildVersion -NotePropertyValue $buildVer
+    $toBuild += $t
+}
 
 if ($toBuild.Count -eq 0) {
     Write-Host ""
-    Write-Host " All executables are up to date. Nothing to build."
-    Write-Host " Use -Force to rebuild everything."
+    Write-Host " No tools selected for build."
     Write-Host " ============================================================"
     exit 0
 }
+
+
 
 # -- Clean the PyInstaller work directory (not dist\) -------------------------
 # dist\ is left intact so up-to-date versioned exes are not removed.
@@ -127,7 +146,7 @@ foreach ($t in $toBuild) {
     }
 
     $src = "dist\$($t.Name).exe"
-    $dst = "dist\$($t.Name)-v$version.exe"
+    $dst = "dist\$($t.Name)-v$($t.BuildVersion).exe"
     if (Test-Path $dst) { Remove-Item $dst -Force }
     Move-Item -Path $src -Destination $dst -Force
     Write-Host " -> $dst"

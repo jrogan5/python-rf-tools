@@ -118,11 +118,10 @@ def read_mdif(file_path: Path) -> Tuple[np.ndarray, List[Dict[str, np.ndarray]]]
     i = 0
     while i < len(lines):
         line = lines[i].strip()
-
         # ----- VAR block -------------------------------------------------
         if line.startswith("VAR"):
             cur: Dict[str, Any] = {}
-            while line.startswith("VAR"):
+            while not line.upper().startswith("BEGIN"):
                 m = re.match(r"VAR\s+([\w]+)(?:\s*\(.*?\))?\s*=\s*(.+)", line)
                 if m:
                     name = re.sub(r"\(.*\)", "", m.group(1)).strip()

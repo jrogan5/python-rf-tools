@@ -21,8 +21,8 @@ def _parse_args() -> argparse.Namespace:
         description="Convert DBF .mat VNA measurement files to a combined MDIF file."
     )
     p.add_argument(
-        "--test-dir", type=Path,
-        help="Root test directory containing ADC*-P*-J*.txt path files.",
+        "--base-dir", type=Path,
+        help="Base directory containing test directories with ADC*-P*-J*.txt files.",
     )
     group = p.add_mutually_exclusive_group()
     group.add_argument("--powered",   dest="powered", action="store_true",  default=None,
@@ -30,8 +30,8 @@ def _parse_args() -> argparse.Namespace:
     group.add_argument("--unpowered", dest="powered", action="store_false",
                        help="Use unpowered measurement subfolder.")
     p.add_argument(
-        "--out-name", default=None,
-        help="Override output filename (written into <test-dir>/plots/).",
+        "--out-dir",
+        help="Give output MDIF file directory",
     )
     return p.parse_args()
 
@@ -39,11 +39,13 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
 
-    test_dir: Path = args.test_dir or prompt_validated(
-        "Test directory (containing ADC*-P*-J*.txt files)", _validate_dir
-    )
-    if not test_dir.is_dir():
-        sys.exit(f"[ERROR] Directory not found: {test_dir}")
+    base_dir: Path = args.base_dir or prompt_validated("Base directory containing test directories with ADC*-P*-J*.txt files", _validate_dir)
+    if not base_dir.is_dir():
+        sys.exit(f"[ERROR] Directory not found: {base_dir}")
+
+    out_dir: Path = args.out_dir or prompt_validated("Give output MDIF file directory", _validate_dir)
+    if not out_dir.is_dir():
+        sys.exit(f"[ERROR] Directory not found: {out_dir}")
 
     powered: bool
     if args.powered is None:
@@ -54,7 +56,7 @@ def main() -> None:
 
     from dbf_to_mdif.converter import run
     try:
-        out = run(test_dir, powered, out_name=args.out_name)
+        out = run(base_dir, powered, out_dir=out_dir)
         print(f"MDIF written to: {out}")
     except Exception as exc:
         sys.exit(f"[ERROR] {exc}")

@@ -31,7 +31,7 @@ class MDIFPlotterApp:
         self._columns = list(first_data.keys())
 
         # ── state variables ───────────────────────────────────────
-        self._checked: Dict[str, bool] = {lbl: True for lbl, _ in traces}
+        self._checked: Dict[str, bool] = {lbl: False for lbl, _ in traces}
         self._x_col   = tk.StringVar(value=self._columns[0] if self._columns else "")
         self._y_col   = tk.StringVar(
             value=self._columns[1] if len(self._columns) > 1 else ""
@@ -113,7 +113,7 @@ class MDIFPlotterApp:
         self._check_vars: Dict[str, tk.BooleanVar] = {}
         self._check_widgets: List[Tuple[str, ttk.Checkbutton]] = []
         for label, _ in self._all_traces:
-            var = tk.BooleanVar(value=True)
+            var = tk.BooleanVar(value=False)
             var.trace_add("write", lambda *_, lbl=label: self._on_check(lbl))
             cb = ttk.Checkbutton(self._check_frame, text=label, variable=var)
             cb.pack(anchor=tk.W, padx=4, pady=1)

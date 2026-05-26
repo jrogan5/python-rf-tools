@@ -4,8 +4,8 @@
 from PyInstaller.building.build_main import Analysis, PYZ, EXE
 
 a = Analysis(
-    ["plot/cli.py"],
-    pathex=["."],
+    ["../plot/cli.py"],
+    pathex=[".."],
     binaries=[],
     datas=[],
     hiddenimports=[

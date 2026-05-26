@@ -19,6 +19,7 @@ def _parse_path_id(stem: str) -> Optional[Dict]:
         return None
     return {
         "ADC": int(m.group(1)),
+        "IdxASIC" : int(m.group(2)),
         "RefDesDBF": int(m.group(3)),
     }
 
@@ -51,7 +52,7 @@ def run(
     top_dir: Path,
     powered: bool,
     *,
-    out_name: Optional[str] = None,
+    out_dir: Path,
 ) -> Path:
     """
     Walk *top_dir* (e.g. RX_Meas/), treating each sub-directory as one test
@@ -60,15 +61,16 @@ def run(
       - a powered or unpowered measurement folder with an acq_*/ sub-directory
         containing one or more .mat files
 
-    All sessions are combined into a single MDIF file written to
-    <top_dir>/plots/<out_name>.
+    All sessions are combined into a single MDIF file.
 
     Returns the path of the written MDIF file.
-    Skipped sessions are reported in <top_dir>/plots/dbf_skipped.txt.
+    Skipped sessions are reported in <out_dir>/dbf_skipped.txt.
     """
     from .parser import parse_mat_file
     from utils.mdif import write_mdif
     from utils.io import ensure_plots_dir
+    import scipy.io, numpy as np                   
+
 
     test_dirs = sorted(d for d in top_dir.iterdir() if d.is_dir() and d.name != "plots")
     if not test_dirs:
@@ -108,18 +110,18 @@ def run(
             skipped.append((test_dir.name, f"no .mat file found in {acq_dir.name}"))
             continue
 
-        mat_path = mat_files[0]
+        mat_path = Path(mat_files[0])
 
         # ── parse measurement data ────────────────────────────────
         try:
-            rows = parse_mat_file(mat_path)
+            rows = parse_mat_file(path=mat_path)
         except Exception as exc:
             skipped.append((test_dir.name, f"{mat_path.name}: {exc}"))
             continue
 
-        meta = {"ADC": info["ADC"], "RefDesDBF": info["RefDesDBF"]}
+        meta = {"ADC": info["ADC"],  "IdxASIC": info["IdxASIC"],"RefDesDBF": info["RefDesDBF"]}
         data_rows = [
-            {"freq": r["freq_ghz"], "s11_db": r["s11_db"], "s11_deg": r["s11_deg"]}
+            {"freq": r["freq"], "s11_db": r["s11_db"], "s11_deg": r["s11_deg"]}
             for r in rows
         ]
         blocks.append((meta, data_rows))
@@ -137,8 +139,8 @@ def run(
         raise RuntimeError(f"No data blocks could be converted.\n  {reasons}")
 
     power_label = "powered" if powered else "unpowered"
-    mdif_name = out_name or f"dbf_s11_{power_label}.mdif"
-    out_path = plots_dir / mdif_name
+    mdif_name = f"dbf_s11_{power_label}.mdif"
+    out_path = out_dir / mdif_name
     write_mdif(out_path, blocks, header_tokens=MDIF_HEADER_TOKENS)
 
     return out_path
