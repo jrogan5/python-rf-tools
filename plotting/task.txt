@@ -15,13 +15,23 @@ test_260504_113540/
 |
 |-- test_rx_rf_isol_ret_loss_powered[ADCMultiport_S_Parameters_RL]/acq_260504_114624/  # where all the ret loss data are for powered
 |   |-- [MULTIPORT_Sp][P*][DBF_EM_SPOUT*].mat # file containing data from measurements in structs. These files will be refered to as "the data"
-
 |
-|-- test_rx_rf_isol_ret_loss_powered[ADCMultiport_S_Parameters_RL]/acq_260504_114643/  # where all the ret loss data are for unpowered
+|-- test_rx_rf_isol_ret_loss_unpowered[ADCMultiport_S_Parameters_RL]/acq_260504_114643/  # where all the ret loss data are for unpowered
 
 
 S11 measurement data found in Matlab measurement file should be exported automatically. The script can (but does not have to) use a CSV fomrat as a n intermediary to the MDIF format if it makes the worekflowe simpler. 
+The measurements should be concetinated into an MDIF file. 
 
+For example, the data struct "vna_data" contained in the mat file in the test directory with file (only need to read filename to know the information ) ADC0-P1-J201.txt:
+
+I think the matlab data has columns frequency [GHz], magnitude, radians. I don't know quite the units, but you can figurte out something that make ssense
+
+The final MDIF header should look like:
+
+VAR IdxASIC(real) = 1
+VAR RefDesDBF(real) = 201
+VAR ADC(real) = 0
+%freq(real) s11_db(real) s11_deg(real)
 
 To be Confirmed: Final task is to add a quick layout view pointing the path RL displayed in order to establish some trend on good and bad RL path. 
 Just return Loss s11 is plotted so far but we could reuse the script to plot other dataset in same kind of format. 
