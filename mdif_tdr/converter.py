@@ -119,7 +119,7 @@ def run_tdr(
 
         row_meta = dict(meta[idx]) if idx < len(meta) else {}
         rows = [
-            {"time": float(time[n]), **{sp: float(td_db[sp][n]) for sp in sparams}}
+            {"time": float(time[n]), **{f"{sp}_db": float(td_db[sp][n]) for sp in sparams}}
             for n in range(half)
         ]
         out_blocks.append((row_meta, rows))

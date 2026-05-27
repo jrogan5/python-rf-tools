@@ -50,10 +50,11 @@ def write_mdif(
     for meta, rows in blocks:
         # ----- VAR lines (all entries) ---------------------------------
         for var_name, value in meta.items():
-            if var_name.startswith("!"): # deactivate it
-                lines.append(f"! VAR {var_name[1:]}(real) = {value}\n") # strip off !
-            else: 
-                lines.append(f"VAR {var_name}(real) = {value}\n")
+            val_str = str(int(value)) if isinstance(value, float) and value == int(value) else str(value)
+            if var_name.startswith("!"):
+                lines.append(f"! VAR {var_name[1:]}(real) = {val_str}\n")
+            else:
+                lines.append(f"VAR {var_name}(real) = {val_str}\n")
 
         lines.append("BEGIN ACDATA\n")
 
