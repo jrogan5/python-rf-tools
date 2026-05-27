@@ -1,0 +1,67 @@
+A current bug is that the output produced has the following format:
+
+VAR ADC(real) = 0.0
+VAR IdxASIC(real) = 1.0
+VAR RefDesDBF(real) = 201.0
+BEGIN ACDATA
+%time(real)  s11_db(real)
+0
+3.13205e-12
+6.26409e-12
+9.39614e-12
+1.25282e-11
+1.56602e-11
+1.87923e-11
+2.19243e-11
+2.50564e-11
+2.81884e-11
+3.13205e-11
+3.44525e-11
+
+...
+
+from an input that has the following format:
+VAR ADC(real) = 0
+VAR IdxASIC(real) = 1
+VAR RefDesDBF(real) = 201
+BEGIN ACDATA
+%freq(real)  s11_db(real)  s11_deg(real)
+1e+08        -2.56193      -92.1218
+1.1e+08      -1.87162      -101.456
+1.2e+08      -2.3852       -109.205
+1.3e+08      -2.45953      -114.411
+1.4e+08      -2.43618      -123.917
+1.5e+08      -2.81379      -128.21
+1.6e+08      -3.0957       -135.955
+1.7e+08      -3.22587      -142.029
+1.8e+08      -2.9026       -144.155
+1.9e+08      -3.48589      -154.75
+2e+08        -4.08512      -158.167
+
+
+I need the variables VAR to still be written as INTs and I need the s11_db data to still show up with time as the independent variable. How do you think this could be done, and what do you think went wrong?
+
+PS C:\Users\ja099685\Desktop\python-rf-tools> python .\mdif_tdr\cli.py
+
+Select operation:
+
+  1  TDR   – IFFT of S-parameters → reflection magnitude vs time.
+             Use this to locate impedance mismatches along a transmission path.
+             Output is a time-domain MDIF (independent variable: time in seconds).
+
+  2  Gate  – Apply a time-domain gate to isolate one reflection, then transform
+             back to frequency domain.  Use this to strip fixture reflections and
+             recover the DUT's intrinsic S-parameters.
+             Output is a frequency-domain MDIF (same structure as the input).
+
+Enter 1 or 2: 1
+Input MDIF file: C:\Users\ja099685\Desktop\python-rf-tools\dbf_s11_powered.mdif
+Output MDIF file: C:\Users\ja099685\Desktop\python-rf-tools\dbf_s11_powered_tdr.mdif
+
+Advanced options (press Enter to accept defaults):
+  Zero-padding factor [8]: 
+  Window function — kaiser / hann [kaiser]: 
+  Kaiser beta [6.0]: 
+
+Computing TDR: dbf_s11_powered.mdif → dbf_s11_powered_tdr.mdif
+Done.
