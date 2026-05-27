@@ -20,7 +20,8 @@ rf-mdif-nf     = "data_to_mdif.nf.cli:main"
 rf-mdif-s2p    = "data_to_mdif.s2p.cli:main"
 rf-dbf-to-mdif = "dbf_to_mdif.cli:main"
 rf-plot        = "plot.cli:main"
+rf-mdif-tdr    = "mdif_tdr.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["utils*", "data_to_mdif*", "dbf_to_mdif*", "plot*"]
+include = ["utils*", "data_to_mdif*", "dbf_to_mdif*", "plot*", "mdif_tdr*"]

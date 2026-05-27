@@ -99,11 +99,15 @@ $tools = @(
     Sources = @("plot", "utils", "_version.py")
 }
     @{
-    Name    = "rf-dbf-to-mdif"
-    Spec    = "specs\rf-dbf-to-mdif.spec"
-    Sources = @("dbf_to_mdif", "utils", "_version.py")
-}
-
+        Name    = "rf-dbf-to-mdif"
+        Spec    = "specs\rf-dbf-to-mdif.spec"
+        Sources = @("dbf_to_mdif", "utils", "_version.py")
+    }
+    @{
+        Name    = "rf-mdif-tdr"
+        Spec    = "specs\rf-mdif-tdr.spec"
+        Sources = @("mdif_tdr", "utils", "_version.py")
+    }
 )
 $toBuild = @()
 foreach ($t in $tools) {
