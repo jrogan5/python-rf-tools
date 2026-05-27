@@ -65,3 +65,30 @@ Advanced options (press Enter to accept defaults):
 
 Computing TDR: dbf_s11_powered.mdif → dbf_s11_powered_tdr.mdif
 Done.
+
+
+------------------------------------------------------------------------------
+
+Now with the same input but the column issue resolved, I'm confused about one thing, and that's the units of the s11 that I'm seeing.
+The data gives s11_db not only positive, but very high! This is unphysical and probably an error with the script. 
+
+VAR ADC(real) = 0
+VAR IdxASIC(real) = 1
+VAR RefDesDBF(real) = 201
+BEGIN ACDATA
+%time(real)  s11_db(real)
+0            31.5933
+3.13205e-12  32.2106
+6.26409e-12  32.774
+9.39614e-12  33.2858
+1.25282e-11  33.7499
+1.56602e-11  34.1722
+1.87923e-11  34.5598
+2.19243e-11  34.9188
+2.50564e-11  35.2519
+2.81884e-11  35.557
+3.13205e-11  35.8263
+3.44525e-11  36.0473
+3.75846e-11  36.2047
+4.07166e-11  36.2819
+4.38487e-11  36.2627
