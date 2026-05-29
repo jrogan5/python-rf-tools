@@ -23,6 +23,10 @@ rf-plot        = "plot.cli:main"
 rf-mdif-tdr    = "mdif_tdr.cli:main"
 rf-mdif-to-s1p = "utils.mdif_to_s1p:main"
 
+[tool.pytest.ini_options]
+testpaths      = ["tests"]
+addopts        = "--import-mode=importlib"
+
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["utils*", "data_to_mdif*", "dbf_to_mdif*", "plot*", "mdif_tdr*"]

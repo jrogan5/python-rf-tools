@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
-"""CLI for MDIF time-domain transform (TDR) and gating.
+"""TDR analysis tool for MDIF S11 files.
 
-Usage examples
---------------
-TDR:
-  rf-mdif-tdr tdr input.mdif output_tdr.mdif
-  rf-mdif-tdr tdr input.mdif output_tdr.mdif --zpad 16 --window hann --debug
+Usage
+-----
+  rf-mdif-tdr  input.mdif
+  rf-mdif-tdr  input.mdif  -o out_tdr.mdif  --vf 0.66  --t-max-ns 20
+  rf-mdif-tdr  input.mdif  -p s11  --npad 40  --window-beta 13
 
-Gate (start/stop):
-  rf-mdif-tdr gate input.mdif output_gated.mdif --t-start 0.2 --t-stop 1.5
-  rf-mdif-tdr gate input.mdif output_gated.mdif --t-start 0.2 --t-stop 1.5 --taper 0.05 --debug
-
-Gate (center/span, scikit-rf style):
-  rf-mdif-tdr gate input.mdif output_gated.mdif --center 0.85 --span 1.3
-
-All times in nanoseconds.  Run with no arguments for an interactive prompt.
+Run with no arguments for an interactive file prompt.
 """
 
 import argparse
@@ -24,33 +17,12 @@ from pathlib import Path
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from mdif_tdr.converter import run_tdr, run_gate
-from utils.cli import prompt_missing, prompt_validated
+from mdif_tdr.converter import run, _validate_block
+from utils.mdif import read_mdif
+from utils.cli import prompt_validated
 
-_MENU = """
-Select operation:
 
-  1  TDR   – IFFT of S-parameters → impulse magnitude (dB) vs time.
-             Peaks in the output correspond to reflections along the signal path.
-             Use this to locate impedance mismatches, connector faults, or cable
-             discontinuities.  Output: time-domain MDIF.
-
-             Debug mode also writes:
-               *_step.mdif  – step response (ρ, linear reflection coefficient)
-               *_zc.mdif    – characteristic impedance profile (Ohms)
-
-  2  Gate  – Apply a time-domain gate to isolate one specific reflection, then
-             transform back to frequency domain.  Use this to strip fixture or
-             cable reflections and recover the DUT's intrinsic S-parameters.
-             Gate position can be entered as start/stop or as centre + span.
-             Output: frequency-domain MDIF (same structure as the input).
-
-             Debug mode also writes:
-               *_pregated_impulse.mdif  – impulse before gating
-               *_gated_impulse.mdif     – impulse after gating (verify gate placement)
-
-Enter 1 or 2: """
-
+# ── interactive helpers ───────────────────────────────────────────────────────
 
 def _prompt_existing_file(label: str) -> Path:
     def validate(s):
@@ -59,153 +31,97 @@ def _prompt_existing_file(label: str) -> Path:
     return prompt_validated(label, validate)
 
 
-def _prompt_output_path(label: str) -> Path:
-    def validate(s):
-        if not s:
-            return (False, "Path cannot be empty.")
-        return (True, Path(s))
-    return prompt_validated(label, validate)
+def _select_param(data_blocks) -> str:
+    """
+    If every block has s11_db/s11_deg, proceed silently.
+    Otherwise list available S-param pairs and prompt.
+    """
+    import re
+    # Collect all distinct S-param base names across all blocks
+    all_params: set = set()
+    for block in data_blocks:
+        for col in block:
+            m = re.match(r"(s\d+)_db$", col, re.IGNORECASE)
+            if m and f"{m.group(1)}_deg" in block:
+                all_params.add(m.group(1).lower())
 
+    if not all_params:
+        print("[ERROR] No S-parameter column pairs (sXX_db / sXX_deg) found.")
+        sys.exit(1)
 
-def _prompt_float_positive(label: str) -> float:
-    def validate(s):
+    if len(all_params) == 1:
+        return all_params.pop()
+
+    params = sorted(all_params)
+    print("\nMultiple S-parameters found:")
+    for i, p in enumerate(params, 1):
+        print(f"  {i}  {p}")
+
+    while True:
+        raw = input("Choose parameter (number or name): ").strip().lower()
+        if raw in params:
+            return raw
         try:
-            v = float(s)
-            return (True, v) if v >= 0 else (False, "Value must be >= 0.")
+            idx = int(raw) - 1
+            if 0 <= idx < len(params):
+                return params[idx]
         except ValueError:
-            return (False, f"Not a valid number: {s!r}")
-    return prompt_validated(label, validate)
+            pass
+        print(f"  Enter a number 1–{len(params)} or one of {params}")
 
 
-def _prompt_common() -> dict:
-    input_path  = _prompt_existing_file("Input MDIF file")
-    output_path = _prompt_output_path("Output MDIF file")
-
-    print("\nAdvanced options (press Enter to accept defaults):")
-
-    raw_zpad = input("  Zero-padding factor [8]: ").strip()
-    zpad = int(raw_zpad) if raw_zpad else 8
-
-    raw_window = input("  Window function — kaiser / hann [kaiser]: ").strip().lower()
-    window = raw_window if raw_window in ("kaiser", "hann") else "kaiser"
-
-    beta = 6.0
-    if window == "kaiser":
-        raw_beta = input("  Kaiser beta [6.0]: ").strip()
-        beta = float(raw_beta) if raw_beta else 6.0
-
-    raw_debug = input("  Write debug intermediate files? y / [n]: ").strip().lower()
-    debug = raw_debug in ("y", "yes")
-
-    return dict(input_path=input_path, output_path=output_path,
-                zpad=zpad, window=window, beta=beta, debug=debug)
-
-
-def _run_interactive() -> None:
-    choice = input(_MENU).strip()
-    if choice not in ("1", "2"):
-        sys.exit(f"[ERROR] Unknown option: '{choice}'")
-
-    common = _prompt_common()
-
-    if choice == "1":
-        print(f"\nComputing TDR: {common['input_path'].name} → {common['output_path'].name}")
-        run_tdr(
-            common["input_path"],
-            common["output_path"],
-            zpad=common["zpad"],
-            window=common["window"],
-            beta=common["beta"],
-            debug=common["debug"],
-        )
-        if common["debug"]:
-            stem = common["output_path"].stem
-            print(f"  Debug files: {stem}_step.mdif, {stem}_zc.mdif")
-        print("Done.")
-
+def _print_summary(s: dict) -> None:
+    c = 2.998e8
+    vp = s["vf"] * c
+    print()
+    print("=" * 60)
+    print(f"  Input  : {s['input_path'].name}  ({s['n_blocks']} block(s))")
+    print(f"  Output : {s['output_path']}")
+    print()
+    print(f"  Freq range : {s['f_min_GHz']:.4f} – {s['f_max_GHz']:.4f} GHz")
+    print(f"  Points     : {s['N']}   step = {s['df_MHz']:.4f} MHz")
+    print()
+    if s["vf"] != 1.0:
+        print(f"  Spatial resolution (vf=1.0) : {s['res_mm'] / s['vf']:.2f} mm")
+        print(f"  Spatial resolution (vf={s['vf']:.2f}): {s['res_mm']:.2f} mm")
+        print(f"  Max range          (vf=1.0) : {s['range_m'] / s['vf']:.3f} m")
+        print(f"  Max range          (vf={s['vf']:.2f}): {s['range_m']:.3f} m")
     else:
-        print("\nGate specification — enter start/stop OR centre/span (nanoseconds).")
-        print("  Leave centre blank to use start/stop.")
-        raw_centre = input("  Centre (ns) [blank = use start/stop]: ").strip()
-
-        if raw_centre:
-            center = float(raw_centre)
-            span   = _prompt_float_positive("  Span (ns)")
-            t_start_s = (center - span / 2.0) * 1e-9
-            t_stop_s  = (center + span / 2.0) * 1e-9
-            print(f"  → start={center - span/2:.3f} ns  stop={center + span/2:.3f} ns")
-        else:
-            t_start_ns = _prompt_float_positive("  Gate start (ns)")
-            t_stop_ns  = _prompt_float_positive("  Gate stop  (ns)")
-            t_start_s  = t_start_ns * 1e-9
-            t_stop_s   = t_stop_ns  * 1e-9
-
-        raw_taper = input("  Taper width on each edge (ns) [0.1]: ").strip()
-        taper = float(raw_taper) * 1e-9 if raw_taper else 0.1e-9
-
-        print(
-            f"\nGating: {common['input_path'].name} → {common['output_path'].name}  "
-            f"[{t_start_s*1e9:.3f} ns … {t_stop_s*1e9:.3f} ns, "
-            f"taper={taper*1e9:.3f} ns]"
-        )
-        run_gate(
-            common["input_path"],
-            common["output_path"],
-            t_start=t_start_s,
-            t_stop=t_stop_s,
-            taper=taper,
-            zpad=common["zpad"],
-            window=common["window"],
-            beta=common["beta"],
-            debug=common["debug"],
-        )
-        if common["debug"]:
-            stem = common["output_path"].stem
-            print(f"  Debug files: {stem}_pregated_impulse.mdif, {stem}_gated_impulse.mdif")
-        print("Done.")
+        print(f"  Spatial resolution : {s['res_mm']:.2f} mm")
+        print(f"  Max range          : {s['range_m']:.3f} m")
+    print()
+    print(f"  Largest impulse peak:")
+    print(f"    t      = {s['peak_t_ns']:.4f} ns")
+    print(f"    Γ(imp) = {s['peak_impulse']:.4f}")
+    print(f"    Γ(step)= {s['peak_step']:.4f}")
+    print("=" * 60)
+    print()
 
 
 # ── argparse ──────────────────────────────────────────────────────────────────
 
-def _add_common_args(p: argparse.ArgumentParser) -> None:
-    p.add_argument("input",  type=Path, help="Input MDIF file.")
-    p.add_argument("output", type=Path, help="Output MDIF file path.")
-    p.add_argument("--zpad",   type=int,   default=8,  metavar="N",
-                   help="Zero-padding factor (default: 8).")
-    p.add_argument("--window", choices=["kaiser", "hann"], default="kaiser",
-                   help="Spectral window (default: kaiser).")
-    p.add_argument("--beta",   type=float, default=6.0,
-                   help="Kaiser beta (default: 6.0, ignored for hann).")
-    p.add_argument("--debug",  action="store_true",
-                   help="Write intermediate debug MDIF files alongside the output.")
-
-
 def _build_parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(
+    p = argparse.ArgumentParser(
         prog="rf-mdif-tdr",
-        description="Time-domain transform and gating for MDIF S-parameter files.",
+        description="TDR analysis: convert an S11 MDIF to impulse / step / impedance vs time.",
     )
-    sub = root.add_subparsers(dest="command")
-
-    # tdr
-    p_tdr = sub.add_parser("tdr", help="Impulse response (dB) vs time.")
-    _add_common_args(p_tdr)
-    p_tdr.add_argument("--z0", type=float, default=50.0,
-                       help="Reference impedance in Ohms for Zc debug output (default: 50).")
-
-    # gate
-    p_gate = sub.add_parser("gate", help="Time-domain gate → gated frequency-domain MDIF.")
-    _add_common_args(p_gate)
-    p_gate.add_argument("--taper", type=float, default=0.1, metavar="NS",
-                        help="Raised-cosine taper on each gate edge in ns (default: 0.1).")
-
-    grp = p_gate.add_mutually_exclusive_group(required=True)
-    grp.add_argument("--start-stop", nargs=2, type=float, metavar=("T_START", "T_STOP"),
-                     help="Gate start and stop in nanoseconds.")
-    grp.add_argument("--center-span", nargs=2, type=float, metavar=("CENTER", "SPAN"),
-                     help="Gate centre and full span in nanoseconds (scikit-rf style).")
-
-    return root
+    p.add_argument("input", nargs="?", type=Path,
+                   help="Input MDIF file (omit for interactive file prompt).")
+    p.add_argument("-o", "--output", type=Path, default=None,
+                   help="Output MDIF path (default: <input_stem>_tdr.mdif).")
+    p.add_argument("-p", "--param", default=None,
+                   help="S-parameter to use, e.g. s11 (default: auto-select / prompt).")
+    p.add_argument("--vf", type=float, default=1.0,
+                   help="Velocity factor vp/c for distance axis (default: 1.0).")
+    p.add_argument("--window-beta", type=float, default=6.0, dest="beta",
+                   help="Kaiser window beta (default: 6).")
+    p.add_argument("--npad", type=int, default=20,
+                   help="Zero-padding factor (default: 20).")
+    p.add_argument("--z0", type=float, default=50.0,
+                   help="Reference impedance in Ohms (default: 50).")
+    p.add_argument("--t-max-ns", type=float, default=None, dest="t_max_ns",
+                   help="Truncate output to first N nanoseconds (default: write all).")
+    return p
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
@@ -213,55 +129,74 @@ def _build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     args = _build_parser().parse_args()
 
-    if args.command is None:
-        try:
-            _run_interactive()
-        except (KeyboardInterrupt, EOFError):
-            print("\nAborted.")
-        return
+    # Resolve input path (prompt if not supplied)
+    if args.input is None:
+        input_path = _prompt_existing_file("Input MDIF file")
+    else:
+        input_path = args.input
+        if not input_path.is_file():
+            sys.exit(f"[ERROR] File not found: {input_path}")
 
-    if not args.input.is_file():
-        sys.exit(f"[ERROR] Input file not found: {args.input}")
-    args.output.parent.mkdir(parents=True, exist_ok=True)
+    # Validate vf
+    if not (0 < args.vf <= 1.0):
+        print(f"[WARNING] --vf {args.vf} is outside (0, 1]. Results may be unphysical.")
+
+    # Resolve output path
+    output_path = args.output or input_path.with_name(input_path.stem + "_tdr.mdif")
+
+    # Peek at the file to do param selection before the main run
+    try:
+        _, data_blocks = read_mdif(input_path)
+    except Exception as exc:
+        sys.exit(f"[ERROR] Could not read {input_path}: {exc}")
+
+    if not data_blocks:
+        sys.exit(f"[ERROR] No data blocks found in {input_path}")
+
+    # Param selection (may prompt interactively)
+    param = args.param or _select_param(data_blocks)
+
+    # Validate the first block has the expected columns
+    block0 = data_blocks[0]
+    # Remap generic param name to actual columns expected by _validate_block
+    if param != "s11":
+        # Remap: rename the chosen param's columns to s11_db/s11_deg for the converter
+        # (converter currently only handles s11; extend here if multi-param support needed)
+        db_col  = f"{param}_db"
+        deg_col = f"{param}_deg"
+        if db_col not in block0 or deg_col not in block0:
+            print(f"[ERROR] Columns {db_col!r} and/or {deg_col!r} not found.")
+            print(f"  Available: {sorted(block0.keys())}")
+            sys.exit(1)
+        # Alias the chosen param into s11_db / s11_deg so the converter works
+        data_blocks = [
+            {**blk, "s11_db": blk[db_col], "s11_deg": blk[deg_col]}
+            for blk in data_blocks
+        ]
 
     try:
-        if args.command == "tdr":
-            print(f"Computing TDR: {args.input.name} → {args.output.name}")
-            run_tdr(
-                args.input, args.output,
-                zpad=args.zpad, window=args.window, beta=args.beta,
-                z0=args.z0, debug=args.debug,
-            )
-            if args.debug:
-                print(f"  Debug: {args.output.stem}_step.mdif, {args.output.stem}_zc.mdif")
-            print("Done.")
-
-        elif args.command == "gate":
-            if args.start_stop:
-                t_start_s = args.start_stop[0] * 1e-9
-                t_stop_s  = args.start_stop[1] * 1e-9
-                label = f"{args.start_stop[0]} ns … {args.start_stop[1]} ns"
-            else:
-                c, sp = args.center_span
-                t_start_s = (c - sp / 2.0) * 1e-9
-                t_stop_s  = (c + sp / 2.0) * 1e-9
-                label = f"center={c} ns, span={sp} ns"
-
-            print(f"Gating: {args.input.name} → {args.output.name}  [{label}]")
-            run_gate(
-                args.input, args.output,
-                t_start=t_start_s, t_stop=t_stop_s,
-                taper=args.taper * 1e-9,
-                zpad=args.zpad, window=args.window, beta=args.beta,
-                debug=args.debug,
-            )
-            if args.debug:
-                stem = args.output.stem
-                print(f"  Debug: {stem}_pregated_impulse.mdif, {stem}_gated_impulse.mdif")
-            print("Done.")
-
-    except Exception as exc:
+        _validate_block(data_blocks[0])
+    except ValueError as exc:
         sys.exit(f"[ERROR] {exc}")
+
+    # Run
+    try:
+        summary = run(
+            input_path,
+            output_path,
+            vf=args.vf,
+            beta=args.beta,
+            npad=args.npad,
+            z0=args.z0,
+            t_max_ns=args.t_max_ns,
+        )
+    except ValueError as exc:
+        sys.exit(f"[ERROR] {exc}")
+
+    summary["input_path"]  = input_path
+    summary["output_path"] = output_path
+    summary["vf"]          = args.vf
+    _print_summary(summary)
 
 
 if __name__ == "__main__":

@@ -1,403 +1,256 @@
-"""MDIF time-domain transform and gating.
+"""MDIF TDR converter.
 
-TDR  – IFFT of each S-param → impulse magnitude (dB) vs time.
-Gate – IFFT → time-gate → FFT back → frequency-domain MDIF.
+Computes Time-Domain Reflectometry signals from S11 frequency-domain data:
+  impulse  – r(t), impulse response (reflection coefficient units)
+  step     – R(t) = cumsum(impulse), step reflection coefficient
+  Z        – impedance profile Z(t) in Ohms
 
-Debug mode (debug=True) writes three extra files alongside the main output:
-  *_impulse.mdif  – impulse response magnitude in dB vs time  (same as TDR output)
-  *_step.mdif     – step response (linear reflection coefficient ρ) vs time
-  *_zc.mdif       – characteristic impedance (Ohms) vs time derived from ρ
+Algorithm follows the spec in claude.md exactly.
+Key fix vs naive complex-IFFT: uses irfft + DC extrapolation so the
+one-sided spectrum is extended to DC, producing a real, causal time signal
+with correct amplitude.
+
+read_mdif returns:
+  meta_arr    : np.ndarray(object) — each element is a dict of VAR entries
+  data_blocks : list[dict]         — each dict maps column name → np.ndarray
+  Relevant column names used here: 'freq', 's11_db', 's11_deg'
 """
 
-import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-from numpy.fft import fft, ifft
 
 from utils.mdif import read_mdif, write_mdif
 
-
-# ── small helpers ─────────────────────────────────────────────────────────────
-
-def _db_deg_to_complex(db: np.ndarray, deg: np.ndarray) -> np.ndarray:
-    return 10.0 ** (db / 20.0) * np.exp(1j * np.radians(deg))
-
-
-def _complex_to_db(c: np.ndarray) -> np.ndarray:
-    return 20.0 * np.log10(np.abs(c) + 1e-30)
+_HEADER_TOKENS = [
+    "%time_ns(real)",
+    "gam_impulse(real)",
+    "gam_step(real)",
+    "impedance(real)",
+]
 
 
-def _complex_to_db_deg(c: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    return _complex_to_db(c), np.degrees(np.angle(c))
+# ── core math ─────────────────────────────────────────────────────────────────
+
+def s11_db_deg_to_complex(s11_db: np.ndarray, s11_deg: np.ndarray) -> np.ndarray:
+    """Convert dB + degrees to linear complex."""
+    mag = 10.0 ** (s11_db / 20.0)
+    return mag * np.exp(1j * np.radians(s11_deg))
 
 
-def _detect_sparam_pairs(block: Dict[str, np.ndarray]) -> List[str]:
-    bases = set()
-    for col in block:
-        m = re.match(r"(s\d+)_db$", col, re.IGNORECASE)
-        if m and f"{m.group(1)}_deg" in block:
-            bases.add(m.group(1).lower())
-    return sorted(bases)
-
-
-def _all_sparams(blocks: List[Dict[str, np.ndarray]]) -> List[str]:
-    seen: set = set()
-    for b in blocks:
-        seen.update(_detect_sparam_pairs(b))
-    return sorted(seen)
-
-
-def _make_window(n: int, win: str, beta: float) -> np.ndarray:
-    if win == "kaiser":
-        return np.kaiser(n, beta)
-    if win == "hann":
-        return np.hanning(n)
-    return np.ones(n)
-
-
-def _make_gate(t: np.ndarray, t0: float, t1: float, tap: float) -> np.ndarray:
-    """Raised-cosine tapered gate from t0 to t1."""
-    g = np.zeros_like(t)
-    if tap > 0:
-        r = (t >= t0) & (t < t0 + tap)
-        g[r] = 0.5 * (1.0 - np.cos(np.pi * (t[r] - t0) / tap))
-        f = (t > t1 - tap) & (t <= t1)
-        g[f] = 0.5 * (1.0 - np.cos(np.pi * (t1 - t[f]) / tap))
-    g[(t >= t0 + tap) & (t <= t1 - tap)] = 1.0
-    if tap == 0.0:
-        g[(t >= t0) & (t <= t1)] = 1.0
-    return g
-
-
-# ── core transforms ───────────────────────────────────────────────────────────
-
-def _impulse_response(
-    freq: np.ndarray,
-    s_complex: np.ndarray,
-    win_name: str,
-    beta: float,
-    zpad: int,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+def compute_tdr(
+    freqs: np.ndarray,
+    s11_db: np.ndarray,
+    s11_deg: np.ndarray,
+    *,
+    z0: float = 50.0,
+    beta: float = 6.0,
+    npad: int = 20,
+    vf: float = 1.0,
+) -> Dict:
     """
-    IFFT of windowed, zero-padded S-parameter data.
+    Compute TDR from S11 frequency-domain data.
 
-    Returns
-    -------
-    time      : 1-D array, seconds (first half only — causal response)
-    impulse   : complex 1-D array, normalised so |peak| = 1 for perfect reflector
-    win       : window array (length = len(freq)), exposed for reuse in gating
-    df        : mean frequency step in Hz
+    Returns dict with keys:
+        t_ns     : time array in nanoseconds
+        impulse  : impulse response r(t)  [reflection coefficient units]
+        step     : step reflection coeff R(t) = cumsum(impulse)
+        Z        : impedance profile Z(t) in Ohms
+        dist_mm  : one-way physical distance in mm
+        dt       : time step in seconds
+        z0       : reference impedance used
     """
-    order = np.argsort(freq)
-    f = freq[order]
-    s = s_complex[order]
+    N  = len(freqs)
+    df = (freqs[-1] - freqs[0]) / (N - 1)
 
-    n0 = len(f)
-    n  = n0 * zpad
-    win = _make_window(n0, win_name, beta)
+    # Uniform spacing check
+    dfs = np.diff(freqs)
+    cv  = np.std(dfs) / np.mean(dfs)
+    if cv >= 1e-3:
+        raise ValueError(
+            f"Frequency points are not uniformly spaced "
+            f"(CV={cv:.2e}, min step={dfs.min():.3g} Hz, max step={dfs.max():.3g} Hz). "
+            f"Interpolate to a uniform grid first."
+        )
 
-    padded = np.zeros(n, dtype=complex)
-    padded[:n0] = s * win
+    s11 = s11_db_deg_to_complex(s11_db, s11_deg)
 
-    # Normalise by window coherent gain so |peak| = 1.0 for |S| = 1 everywhere
-    impulse_full = ifft(padded) * n / np.sum(win)
+    # Step 1: Kaiser window
+    #   Tapers band edges → suppresses Gibbs ringing in time domain.
+    #   beta=6  → ~-44 dB sidelobes (default)
+    #   beta=13 → ~-70 dB sidelobes (less time resolution)
+    w     = np.kaiser(N, beta)
+    s11_w = s11 * w
 
-    df  = float(np.mean(np.diff(f)))
-    dt  = 1.0 / (n * df)
-    half = n // 2
-    time = np.arange(half) * dt
+    # Step 2: DC extrapolation
+    #   irfft expects a one-sided spectrum starting at f=0.
+    #   Fill the gap [0, f_min) with Re{S11(f_min)} — a passive network's
+    #   DC reflection coefficient is real, so this is the best estimate
+    #   without extra low-frequency data.
+    f_min   = freqs[0]
+    n_dc    = max(1, int(round(f_min / df)))
+    dc_val  = float(np.real(s11_w[0]))
+    s11_ext = np.concatenate([np.full(n_dc, dc_val), s11_w])
 
-    return time, impulse_full[:half], win, df
+    # Step 3: Zero-pad
+    #   Increases time-domain sample count (interpolation in time).
+    #   Does NOT improve spatial resolution — that is fixed by bandwidth.
+    M     = len(s11_ext)
+    N_pad = M * npad
+    S_pad = np.zeros(N_pad, dtype=complex)
+    S_pad[:M] = s11_ext
+
+    # Step 4: Real IFFT (one-sided → real time signal)
+    #   irfft(X of length N_pad) → 2*(N_pad-1) real samples
+    #   dt = 1 / (2 * (N_pad - 1) * df)
+    impulse = np.fft.irfft(S_pad)
+    n_t     = len(impulse)
+    dt      = 1.0 / (2.0 * (N_pad - 1) * df)
+    t       = np.arange(n_t) * dt
+
+    # Step 5: Step reflection coefficient
+    #   R(t) = ∫ r(τ) dτ — irfft normalisation makes cumsum give correct Γ
+    #   without an extra dt factor.
+    step = np.cumsum(impulse)
+
+    # Step 6: Impedance profile
+    #   Z(t) = Z0 * (1 + R(t)) / (1 - R(t))
+    denom = np.where(np.abs(1.0 - step) < 1e-9, 1e-9, 1.0 - step)
+    Z     = z0 * (1.0 + step) / denom
+
+    # Step 7: Physical distance (one-way: round-trip time / 2)
+    vp      = vf * 2.998e8
+    dist_mm = t * vp / 2.0 * 1000.0
+
+    return {
+        "t_ns"   : t * 1e9,
+        "impulse": impulse,
+        "step"   : step,
+        "Z"      : Z,
+        "dist_mm": dist_mm,
+        "dt"     : dt,
+        "z0"     : z0,
+    }
 
 
-def _step_response(impulse: np.ndarray, dt: float) -> np.ndarray:
-    """
-    Integrate the real part of the impulse response → reflection coefficient ρ(t).
+def resolution_summary(
+    freqs: np.ndarray,
+    vf: float = 1.0,
+) -> Dict:
+    """Return spatial resolution and max unambiguous range."""
+    N      = len(freqs)
+    df     = (freqs[-1] - freqs[0]) / (N - 1)
+    BW     = freqs[-1] - freqs[0]
+    vp     = vf * 2.998e8
+    return {
+        "BW_GHz"   : BW / 1e9,
+        "df_MHz"   : df / 1e6,
+        "N"        : N,
+        "f_min_GHz": freqs[0]  / 1e9,
+        "f_max_GHz": freqs[-1] / 1e9,
+        "res_mm"   : vp / (2.0 * BW) * 1000.0,
+        "range_m"  : vp / (2.0 * df),
+    }
 
-    For a step-like mismatch the result rises to ρ = (Zc-Z0)/(Zc+Z0).
-    The imaginary part is discarded; it carries only the Hilbert envelope of
-    the bandpass carrier and has no physical meaning in ρ space.
-    """
-    return np.cumsum(np.real(impulse)) * dt
 
+# ── block helpers ─────────────────────────────────────────────────────────────
 
-def _char_impedance(step: np.ndarray, z0: float = 50.0) -> np.ndarray:
-    """Convert reflection coefficient ρ(t) → characteristic impedance Zc (Ohms)."""
-    rho = np.clip(step, -0.9999, 0.9999)   # avoid divide-by-zero at open/short
-    return z0 * (1.0 + rho) / (1.0 - rho)
-
-
-# ── debug writer ──────────────────────────────────────────────────────────────
-
-def _write_debug_mdif(
-    path: Path,
-    meta_list,
-    time_per_block: List[np.ndarray],
-    data_per_block: List[Dict[str, np.ndarray]],
-    sparams: List[str],
-    col_suffix: str,
-    col_label: str,
-) -> None:
-    """Write a single-column-per-sparam debug MDIF (time as independent variable)."""
-    header = ["%time(real)"] + [f"{sp}_{col_suffix}(real)" for sp in sparams]
-    out_blocks = []
-    for idx, (time, data) in enumerate(zip(time_per_block, data_per_block)):
-        row_meta = dict(meta_list[idx]) if idx < len(meta_list) else {}
-        rows = [
-            {"time": float(time[n]), **{f"{sp}_{col_suffix}": float(data[sp][n]) for sp in sparams}}
-            for n in range(len(time))
-        ]
-        out_blocks.append((row_meta, rows))
-    write_mdif(path, out_blocks, header_tokens=header)
+def _validate_block(block: Dict[str, np.ndarray]) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return (freq, s11_db, s11_deg) from a data block, or raise with a clear message."""
+    missing = [c for c in ("freq", "s11_db", "s11_deg") if c not in block]
+    if missing:
+        available = sorted(block.keys())
+        raise ValueError(
+            f"Block is missing required columns: {missing}. "
+            f"Available columns: {available}"
+        )
+    return block["freq"], block["s11_db"], block["s11_deg"]
 
 
 # ── public API ────────────────────────────────────────────────────────────────
 
-def run_tdr(
-    inp: Path,
-    out: Path,
+def run(
+    input_path: Path,
+    output_path: Path,
     *,
-    zpad: int = 8,
-    window: str = "kaiser",
+    param: Optional[str] = None,
+    vf: float = 1.0,
     beta: float = 6.0,
+    npad: int = 20,
     z0: float = 50.0,
-    debug: bool = False,
-) -> None:
+    t_max_ns: Optional[float] = None,
+) -> Dict:
     """
-    Compute TDR for every block in an MDIF file.
+    Full pipeline: read MDIF → compute TDR for every block → write MDIF.
 
-    Main output: impulse response magnitude (dB) vs time.
-
-    With debug=True, three extra files are written alongside `out`:
-      *_impulse.mdif  – same impulse magnitude as main output
-      *_step.mdif     – step response (linear ρ, dimensionless)
-      *_zc.mdif       – characteristic impedance in Ohms
+    Returns a summary dict (printed by the CLI).
     """
-    meta, blocks = read_mdif(inp)
-    sparams = _all_sparams(blocks)
-    if not sparams:
-        raise ValueError("No S-parameter column pairs (sXX_db / sXX_deg) found.")
+    meta_arr, data_blocks = read_mdif(input_path)
 
-    hdr = ["%time(real)"] + [f"{sp}_db(real)" for sp in sparams]
+    if not data_blocks:
+        raise ValueError(f"No data blocks found in {input_path}")
 
-    # Accumulators for all blocks (needed to write debug files in one pass)
-    out_blocks   = []
-    dbg_time     = []
-    dbg_impulse  = {}   # sp → list of arrays across blocks
-    dbg_step     = {}
-    dbg_zc       = {}
-    for sp in sparams:
-        dbg_impulse[sp] = []
-        dbg_step[sp]    = []
-        dbg_zc[sp]      = []
-
-    for i, blk in enumerate(blocks):
-        freq = blk.get("freq")
-        if freq is None or len(freq) < 2:
-            continue
-
-        blk_sp = _detect_sparam_pairs(blk)
-        row_meta = dict(meta[i]) if i < len(meta) else {}
-
-        td_db    = {}
-        time_ref = None   # all sparams share the same time axis per block
-
-        for sp in sparams:
-            if sp in blk_sp:
-                s_cplx = _db_deg_to_complex(blk[f"{sp}_db"], blk[f"{sp}_deg"])
-                time, impulse, win, df = _impulse_response(
-                    freq, s_cplx, window, beta, zpad
-                )
-                dt   = time[1] - time[0] if len(time) > 1 else 1.0
-                step = _step_response(impulse, dt)
-                zc   = _char_impedance(step, z0)
-
-                td_db[sp] = _complex_to_db(impulse)
-                if debug:
-                    dbg_impulse[sp].append(_complex_to_db(impulse))
-                    dbg_step[sp].append(step)
-                    dbg_zc[sp].append(zc)
-            else:
-                half = len(freq) * zpad // 2
-                nan  = np.full(half, np.nan)
-                td_db[sp] = nan
-                if debug:
-                    dbg_impulse[sp].append(nan)
-                    dbg_step[sp].append(nan)
-                    dbg_zc[sp].append(nan)
-                time = np.arange(half) / (len(freq) * zpad * float(np.mean(np.diff(freq))))
-
-            if time_ref is None:
-                time_ref = time
-
-        if debug:
-            dbg_time.append(time_ref)
-
-        n = len(time_ref)
-        rows = [
-            {"time": float(time_ref[k]),
-             **{f"{sp}_db": float(td_db[sp][k]) for sp in sparams}}
-            for k in range(n)
-        ]
-        out_blocks.append((row_meta, rows))
-
-    write_mdif(out, out_blocks, header_tokens=hdr)
-
-    if debug:
-        stem = out.stem
-        parent = out.parent
-
-        # impulse (dB)
-        _write_debug_mdif(
-            parent / f"{stem}_impulse.mdif",
-            meta, dbg_time,
-            [{sp: dbg_impulse[sp][i] for sp in sparams} for i in range(len(dbg_time))],
-            sparams, col_suffix="db", col_label="Impulse response (dB)",
-        )
-        # step response (linear ρ)
-        _write_debug_mdif(
-            parent / f"{stem}_step.mdif",
-            meta, dbg_time,
-            [{sp: dbg_step[sp][i] for sp in sparams} for i in range(len(dbg_time))],
-            sparams, col_suffix="rho", col_label="Step response (ρ)",
-        )
-        # characteristic impedance (Ohms)
-        _write_debug_mdif(
-            parent / f"{stem}_zc.mdif",
-            meta, dbg_time,
-            [{sp: dbg_zc[sp][i] for sp in sparams} for i in range(len(dbg_time))],
-            sparams, col_suffix="zc", col_label="Characteristic impedance (Ω)",
-        )
-
-
-def run_gate(
-    inp: Path,
-    out: Path,
-    *,
-    t_start: Optional[float] = None,
-    t_stop: Optional[float] = None,
-    center: Optional[float] = None,
-    span: Optional[float] = None,
-    taper: float = 0.1e-9,
-    zpad: int = 8,
-    window: str = "kaiser",
-    beta: float = 6.0,
-    debug: bool = False,
-) -> None:
-    """
-    Time-domain gate each S-parameter and write a gated frequency-domain MDIF.
-
-    Gate can be specified two ways (matching scikit-rf's time_gate API):
-      start/stop  – explicit gate edges in seconds
-      center/span – centre time and full width in seconds (converted to start/stop)
-
-    With debug=True writes *_pregated_impulse.mdif and *_gated_impulse.mdif
-    so you can visually confirm the gate is positioned correctly.
-    """
-    # Resolve gate edges
-    if center is not None and span is not None:
-        t_start = center - span / 2.0
-        t_stop  = center + span / 2.0
-    if t_start is None or t_stop is None:
-        raise ValueError("Specify either (t_start, t_stop) or (center, span).")
-    if t_start >= t_stop:
-        raise ValueError(f"t_start ({t_start*1e9:.3f} ns) must be < t_stop ({t_stop*1e9:.3f} ns).")
-
-    meta, blocks = read_mdif(inp)
-    sparams = _all_sparams(blocks)
-    if not sparams:
-        raise ValueError("No S-parameter column pairs (sXX_db / sXX_deg) found.")
-
-    hdr = ["%freq(real)"] + [
-        tok for sp in sparams for tok in (f"{sp}_db(real)", f"{sp}_deg(real)")
-    ]
+    # Param selection is handled by the CLI; here we just validate all blocks
+    # have the required S11 columns.  (param arg reserved for future per-param
+    # selection when the MDIF contains multiple S-parameters beyond S11.)
     out_blocks = []
+    summary_tdr = None   # keep the first block's result for the printed summary
 
-    dbg_time        = []
-    dbg_pre_impulse  = {sp: [] for sp in sparams}
-    dbg_post_impulse = {sp: [] for sp in sparams}
+    for i, block in enumerate(data_blocks):
+        try:
+            freq, s11_db, s11_deg = _validate_block(block)
+        except ValueError as exc:
+            raise ValueError(f"Block {i}: {exc}") from exc
 
-    for i, blk in enumerate(blocks):
-        freq = blk.get("freq")
-        if freq is None or len(freq) < 2:
-            continue
+        tdr = compute_tdr(freq, s11_db, s11_deg, z0=z0, beta=beta, npad=npad, vf=vf)
+        if summary_tdr is None:
+            summary_tdr = tdr
+            summary_freq = freq
 
-        blk_sp = _detect_sparam_pairs(blk)
-        df  = float(np.mean(np.diff(freq)))
-        n0  = len(freq)
-        n   = n0 * zpad
-        win = _make_window(n0, window, beta)
-        dt  = 1.0 / (n * df)
-        t   = np.arange(n) * dt
-        gate = _make_gate(t, t_start, t_stop, taper)
+        t_ns    = tdr["t_ns"]
+        impulse = tdr["impulse"]
+        step    = tdr["step"]
+        Z       = tdr["Z"]
 
-        # Index into zero-padded array where the original sweep begins
-        f0  = float(freq[0])
-        k0  = int(round(f0 / df))
-        k1  = k0 + n0
-        if k1 > n:
-            raise ValueError(
-                f"zpad={zpad} too small: f_start/df + N = {k1} > N*zpad = {n}. "
-                f"Increase zpad."
-            )
+        mask = (t_ns <= t_max_ns) if t_max_ns is not None else np.ones(len(t_ns), dtype=bool)
 
-        row_meta = dict(meta[i]) if i < len(meta) else {}
-        gated = {}
-
-        for sp in sparams:
-            if sp in blk_sp:
-                s_cplx = _db_deg_to_complex(blk[f"{sp}_db"], blk[f"{sp}_deg"])
-                padded = np.zeros(n, dtype=complex)
-                padded[:n0] = s_cplx * win
-
-                # To time domain (normalised)
-                td = ifft(padded) * n / np.sum(win)
-                # Gate
-                td_gated = td * gate
-                # Back to frequency domain (invert normalisation)
-                s_back = fft(td_gated) * np.sum(win) / n
-
-                gated[sp] = _complex_to_db_deg(s_back[k0:k1])
-
-                if debug:
-                    half = n // 2
-                    dbg_pre_impulse[sp].append(_complex_to_db(td[:half]))
-                    dbg_post_impulse[sp].append(_complex_to_db(td_gated[:half]))
-            else:
-                nan = np.full(n0, np.nan)
-                gated[sp] = (nan, nan)
-                if debug:
-                    half = n // 2
-                    dbg_pre_impulse[sp].append(np.full(half, np.nan))
-                    dbg_post_impulse[sp].append(np.full(half, np.nan))
-
-        if debug:
-            dbg_time.append(np.arange(n // 2) * dt)
-
+        row_meta = dict(meta_arr[i]) if i < len(meta_arr) else {}
         rows = [
-            {"freq": float(freq[k]),
-             **{f"{sp}_db":  float(gated[sp][0][k]) for sp in sparams},
-             **{f"{sp}_deg": float(gated[sp][1][k]) for sp in sparams}}
-            for k in range(n0)
+            {
+                "time_ns"     : float(t_ns[k]),
+                "gam_impulse" : float(impulse[k]),
+                "gam_step"    : float(step[k]),
+                "impedance"   : float(Z[k]),
+            }
+            for k in range(len(t_ns)) if mask[k]
         ]
         out_blocks.append((row_meta, rows))
 
-    write_mdif(out, out_blocks, header_tokens=hdr)
+    if output_path.exists():
+        print(f"[WARNING] Output file already exists and will be overwritten: {output_path}")
 
-    if debug:
-        stem   = out.stem
-        parent = out.parent
-        _write_debug_mdif(
-            parent / f"{stem}_pregated_impulse.mdif",
-            meta, dbg_time,
-            [{sp: dbg_pre_impulse[sp][i] for sp in sparams} for i in range(len(dbg_time))],
-            sparams, col_suffix="db", col_label="Pre-gate impulse (dB)",
-        )
-        _write_debug_mdif(
-            parent / f"{stem}_gated_impulse.mdif",
-            meta, dbg_time,
-            [{sp: dbg_post_impulse[sp][i] for sp in sparams} for i in range(len(dbg_time))],
-            sparams, col_suffix="db", col_label="Post-gate impulse (dB)",
-        )
+    write_mdif(output_path, out_blocks, header_tokens=_HEADER_TOKENS)
+
+    # Build summary from first block
+    res   = resolution_summary(summary_freq, vf=vf)
+    t_ns  = summary_tdr["t_ns"]
+    imp   = summary_tdr["impulse"]
+    step  = summary_tdr["step"]
+    peak_idx = int(np.argmax(np.abs(imp)))
+
+    return {
+        "input_path"   : input_path,
+        "output_path"  : output_path,
+        "n_blocks"     : len(out_blocks),
+        "f_min_GHz"    : res["f_min_GHz"],
+        "f_max_GHz"    : res["f_max_GHz"],
+        "N"            : res["N"],
+        "df_MHz"       : res["df_MHz"],
+        "res_mm"       : res["res_mm"],
+        "range_m"      : res["range_m"],
+        "peak_t_ns"    : float(t_ns[peak_idx]),
+        "peak_impulse" : float(imp[peak_idx]),
+        "peak_step"    : float(step[peak_idx]),
+        "vf"           : vf,
+    }
