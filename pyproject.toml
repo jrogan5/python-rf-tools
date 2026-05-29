@@ -21,6 +21,7 @@ rf-mdif-s2p    = "data_to_mdif.s2p.cli:main"
 rf-dbf-to-mdif = "dbf_to_mdif.cli:main"
 rf-plot        = "plot.cli:main"
 rf-mdif-tdr    = "mdif_tdr.cli:main"
+rf-mdif-to-s1p = "utils.mdif_to_s1p:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
