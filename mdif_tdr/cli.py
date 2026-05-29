@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 """TDR analysis tool for MDIF S11 files.
 
@@ -119,8 +120,8 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="Zero-padding factor (default: 20).")
     p.add_argument("--z0", type=float, default=50.0,
                    help="Reference impedance in Ohms (default: 50).")
-    p.add_argument("--t-max-ns", type=float, default=None, dest="t_max_ns",
-                   help="Truncate output to first N nanoseconds (default: write all).")
+    p.add_argument("--t-max-ns", type=float, default=10, dest="t_max_ns",
+                   help="Truncate output to first N nanoseconds (default: 10ns).")
     return p
 
 
