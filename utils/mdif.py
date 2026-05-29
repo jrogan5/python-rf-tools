@@ -159,3 +159,30 @@ def read_mdif(file_path: Path) -> Tuple[np.ndarray, List[Dict[str, np.ndarray]]]
 
     meta_arr = np.array(meta, dtype=object)
     return meta_arr, data_blocks
+
+def split_mdif_by_var(
+    blocks: List[Tuple[Dict[str, Any], List[Dict[str, Any]]]],
+    var_name: str,
+) -> List[List[Tuple[Dict[str, Any], List[Dict[str, Any]]]]]:
+
+    # Build a mapping  VAR value list of block indices
+    groups: Dict[Any, List[Tuple[Dict[str, Any], List[Dict[str, Any]]]]] = {}
+    for block in blocks:
+        meta, rows = block
+        if var_name not in meta:
+            raise KeyError(f"VAR '{var_name}' not found in block with meta {meta}")
+
+        groups.setdefault(meta[var_name],[]).append((meta, rows))
+
+    # Define a deterministic order for the groups
+    try:
+        ordered_vals = sorted(groups)          # works when values are comparable
+    except TypeError:                         # mixed types - keep appearance order
+        ordered_vals = list(groups)
+
+    # Assemble the result
+    split_blocks: List[
+        List[Tuple[Dict[str, Any], List[Dict[str, Any]]]]
+        ] = [groups[v] for v in ordered_vals]
+
+    return split_blocks
